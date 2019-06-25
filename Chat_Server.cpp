@@ -108,12 +108,20 @@ void PollPorts() {
 		}
 
 		for (unsigned int i = 0; i < readFDS.fd_count; ++i) {
-			char buf[1024];
-			memset(buf, '\0', 1024);
-			recv(readFDS.fd_array[i], buf, 1024, 0);
+			char buf[1025];
+			std::string out;
 
+			//Read from socket and append to output string until no new characters are read.
+			while (true) {
+				memset(buf, '\0', 1025);
+				recv(readFDS.fd_array[i], buf, 1024, 0);
+				out.append(buf);
+				if (buf[1023] == '\0') { break; }
+			}
+			
 			//Send message to all connections.
-			for (unsigned int j = 0; j < readFDS.fd_count; ++j) { send(readFDS.fd_array[j], buf, 1024, 0); }
+			for (unsigned int j = 0; j < readFDS.fd_count; ++j) { send(readFDS.fd_array[j], out.c_str(), out.size() + 1, 0); }
+			out.clear();
 		}
 
 		for (unsigned int i = 0; i < exceptFDS.fd_count; ++i) {
