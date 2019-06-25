@@ -13,6 +13,10 @@ The pair is a portfolio piece meant to demonstrate competence with C++ and the W
 Thus far I have verified it works on a single computer with a single user.
 I have not yet verified it with multiple users at different ip addresses.
 
+TODO:
+[] Associate names with sockets through which users communicate.
+[] Add name of sender to each message before sending it out.
+
 Other topics:
 Socket communication with BSD/Winsocket
 Multithreading
