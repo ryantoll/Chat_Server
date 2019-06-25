@@ -19,7 +19,4 @@
 #include <WS2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")	//Links in dll library needed for WS2tcpip.h
 
-//Classes
-#include "Socket_Manager.h"
-
 // TODO: reference additional headers your program requires here
