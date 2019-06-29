@@ -3,13 +3,15 @@
 
 #include "stdafx.h"
 
+using namespace std;
+
 addrinfo hints;
-std::string portNumber = "7777";
-std::atomic_bool killConnection = TRUE;
+string portNumber = "7777";
+atomic_bool killConnection = TRUE;
 fd_set ConnectionSet, ErrorSet;
-std::mutex mEX_Sets, mEX_NameMap;
-std::thread t;
-std::map<SOCKET, std::string> nameMap;
+mutex mEX_Sets, mEX_NameMap;
+thread t;
+map<SOCKET, string> nameMap;
 
 SOCKET OpenNewSocket() {
 	SOCKET newSocket = INVALID_SOCKET;
@@ -24,54 +26,55 @@ SOCKET OpenNewSocket() {
 		newSocket = socket(i->ai_family, i->ai_socktype, i->ai_protocol);
 		if (newSocket == INVALID_SOCKET) { closesocket(newSocket); continue; }
 
-
-		status = bind(newSocket, i->ai_addr, i->ai_addrlen);	//
+		status = ::bind(newSocket, i->ai_addr, i->ai_addrlen);	//Specify ::bind because bind is the prefered overload.
 		if (status > -1) { continue; }
 	}
-	if (status == -1) { closesocket(newSocket); std::cout << "Socket connection failed." << std::endl; freeaddrinfo(res); return INVALID_SOCKET; }	//Upon failure, return an invalid socket and give error message.
+	if (status == -1) { closesocket(newSocket); cout << "Socket connection failed." << endl; freeaddrinfo(res); return INVALID_SOCKET; }	//Upon failure, return an invalid socket and give error message.
 
 	freeaddrinfo(res);
 	return newSocket;
 }
 
 void ReceiveConnections(SOCKET in) {
-	std::unique_lock<std::mutex> sets(mEX_Sets, std::defer_lock);		//Associates variable "sets" with mutex mEX_Sets while leaving the mutex unlocked.
-	std::unique_lock<std::mutex> names(mEX_NameMap, std::defer_lock);		//Associates variable "sets" with mutex mEX_Sets while leaving the mutex unlocked.
+	unique_lock<mutex> sets(mEX_Sets, defer_lock);			//Associates variable "sets" with mutex mEX_sets while leaving the mutex unlocked.
+	unique_lock<mutex> names(mEX_NameMap, defer_lock);		//Associates variable "names" with mutex mEX_names while leaving the mutex unlocked.
 
-	//while (!killConnection.load(std::memory_order_acquire) && in != INVALID_SOCKET) {
+	//while (!killConnection.load(memory_order_acquire) && in != INVALID_SOCKET) {		//I considered having this on it's own thread for conceptual separation and to free up the UI.
 		//Check for incoming connection requests...
-		std::cout << "Listening..." << std::endl;
+		cout << "Listening..." << endl;
 		int result = listen(in, 20);
-		if (result > -1) { std::cout << "Connection heard." << std::endl; }
+		if (result > -1) { cout << "Connection heard." << endl; }
 		else {
 			int x = WSAGetLastError();
-			std::cout << gai_strerrorA(x) << std::endl;
+			cout << gai_strerrorA(x) << endl;
 		}
 		SOCKET newConnection = accept(in, NULL, NULL);
-		if (newConnection != INVALID_SOCKET) { std::cout << "Connection accepted." << std::endl; }
+		if (newConnection != INVALID_SOCKET) { cout << "Connection accepted." << endl; }
 		else {
 			int x = WSAGetLastError();
-			std::cout << gai_strerrorA(x) << std::endl;
+			cout << gai_strerrorA(x) << endl;
 		}
 		sets.lock();
 		FD_SET(newConnection, &ConnectionSet);	//Adds any incoming connections to connection set
 		sets.unlock();
 
-		//char x[1024];
-		//int bytesRecv = recv(newConnection, x, 1023, 0);
-		//std::string name = x;
+		char x[1025];
+		memset(x, '\0', 1025);
+		int bytesRecv = recv(newConnection, x, 1024, 0);
+		string name = x;
 
-		//names.lock();
-		//nameMap[newConnection] = name;	//Associates a username with a given socket
-		//names.unlock();
+		names.lock();
+		nameMap[newConnection] = name;	//Associates a username with a given socket
+		names.unlock();
 	//}
 }
 
 
 void PollPorts() {
 	//Run indefinitely until cued to stop.
-	while (!killConnection.load(std::memory_order_acquire)) {
-		std::unique_lock<std::mutex> sets(mEX_Sets, std::defer_lock);		//Associates variable "sets" with mutex mEX_Sets while leaving the mutex unlocked.
+	while (!killConnection.load(memory_order_acquire)) {
+		unique_lock<mutex> sets(mEX_Sets, defer_lock);		//Associates variable "sets" with mutex mEX_sets while leaving the mutex unlocked.
+		unique_lock<mutex> names(mEX_NameMap, defer_lock);		//Associates variable "names" with mutex mEX_names while leaving the mutex unlocked.
 
 		//The function gets its own copy of the fd sets to prevent data collision/contention.
 		//This is remade each pass with the most current data.
@@ -89,7 +92,7 @@ void PollPorts() {
 		tv.tv_usec = 10000;		//To be clear, this is denominated in MICRO seconds (Greek letter mu represented by our letter u). Times out in 0.01 sec.
 		int ready = select(NULL, &readFDS, NULL, &exceptFDS, &tv);
 
-		while (ready == 0 && !killConnection.load(std::memory_order_acquire)) {
+		while (ready == 0 && !killConnection.load(memory_order_acquire)) {
 			Sleep(10);			//Denominated in miliseconds.
 			sets.lock();		//Lock fd sets
 			readFDS = ConnectionSet;
@@ -102,14 +105,18 @@ void PollPorts() {
 
 		if (ready == -1) {
 			int x = WSAGetLastError();
-			std::cout << gai_strerrorA(x) << std::endl;
+			cout << gai_strerrorA(x) << endl;
 			Sleep(250);
 			continue;
 		}
 
 		for (unsigned int i = 0; i < readFDS.fd_count; ++i) {
 			char buf[1025];
-			std::string out;
+			string out;
+
+			names.lock();
+			out = "[" + nameMap.find(readFDS.fd_array[i])->second + "] ";
+			names.unlock();
 
 			//Read from socket and append to output string until no new characters are read.
 			while (true) {
@@ -118,7 +125,7 @@ void PollPorts() {
 				out.append(buf);
 				if (buf[1023] == '\0') { break; }
 			}
-			
+
 			//Send message to all connections.
 			for (unsigned int j = 0; j < readFDS.fd_count; ++j) { send(readFDS.fd_array[j], out.c_str(), out.size() + 1, 0); }
 			out.clear();
@@ -133,10 +140,10 @@ void PollPorts() {
 			sets.unlock();	//Unlock fd sets
 
 			//Send error message.
-			std::string out = "Connection to ";
+			string out = "Connection to ";
 			out += "_____";		//Placeholder. Connections are unnamed at this point.
 			out += " was lost.";
-			std::cout << out.c_str() << std::endl;
+			cout << out.c_str() << endl;
 		}
 	}
 
@@ -149,7 +156,7 @@ int main()
 	WSADATA wsaData;
 	int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
-		std::cout << "WinSock2 failed to initialize." << std::endl;
+		cout << "WinSock2 failed to initialize." << endl;
 	}
 	//Ensure sets are empty before use.
 	FD_ZERO(&ConnectionSet); FD_ZERO(&ErrorSet);
@@ -161,17 +168,17 @@ int main()
 	hints.ai_protocol = IPPROTO_TCP;	//TCP/IP protocol for connection
 
 	SOCKET s = OpenNewSocket();
-	killConnection.store(FALSE, std::memory_order_release);		//Set "kill connection" flag to FALSE.
-																//Acquire/release semantics are used to enforce adequate memory ordering at minimal cost.
+	killConnection.store(FALSE, memory_order_release);		//Set "kill connection" flag to FALSE.
+															//Acquire/release semantics are used to enforce adequate memory ordering at minimal cost.
 	ReceiveConnections(s);
-	t = std::thread(PollPorts);
+	t = thread(PollPorts);
 
 
-	std::cout << "text" << std::endl;
+	cout << "text" << endl;
 	
 	char x[2];
-	std::cin >> x;
-	std::string input(x);
+	cin >> x;
+	string input(x);
 	while (input != "x") {
 		ReceiveConnections(s);
 	}
@@ -180,7 +187,7 @@ int main()
 	//Close all sockets
 	closesocket(s);
 
-	std::unique_lock<std::mutex> sets(mEX_Sets);		//Lock mutex for the three fd sets
+	unique_lock<mutex> sets(mEX_Sets);		//Lock mutex for the three fd sets
 		for (size_t i = 0; i < ConnectionSet.fd_count; ++i) { closesocket(ConnectionSet.fd_array[i]); }
 		for (size_t i = 0; i < ErrorSet.fd_count; ++i) { closesocket(ErrorSet.fd_array[i]); }
 	sets.unlock();							//Unlock mutex for the three fd sets once done.
@@ -188,7 +195,7 @@ int main()
 											//unique_lock<> or lock_guard<> both release the mutex automatically in their in their own destructor when the local variable expires.
 	
 	//Wait to cue thread exit until just before joining. If not, thread t may finish first and prematurely terminate the program upon completion.
-	killConnection.store(TRUE, std::memory_order_release);		//Set "kill connection" flag to TRUE. This will cue the loop polling the sockets to exit.
+	killConnection.store(TRUE, memory_order_release);		//Set "kill connection" flag to TRUE. This will cue the loop polling the sockets to exit.
 	if (t.joinable()) { t.join(); }		//Join the connection thread before destruction. Check first that it's joinable.
 
 	//Cleanup any lingering WinSock data
